@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'TARGET_BRANCH',
+            choices: ['main', 'dev'],
+            description: 'Which branch/environment do you want to deploy?'
+        )
+    }
+
+    tools {
+        nodejs 'node'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: "${params.TARGET_BRANCH}",
+                    url: 'https://github.com/caleones/cicd-pipeline-carlos-leones.git',
+                    credentialsId: 'github_https'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'chmod +x scripts/build.sh'
+                sh './scripts/build.sh'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'chmod +x scripts/test.sh'
+                sh './scripts/test.sh'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def imageName
+                    if (params.TARGET_BRANCH == 'main') {
+                        imageName = 'nodemain'
+                    } else {
+                        imageName = 'nodedev'
+                    }
+                    def tag = 'v1.0'
+                    env.IMAGE_FULL = "${imageName}:${tag}"
+                    sh "docker build -t ${env.IMAGE_FULL} ."
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                script {
+                    def containerName
+                    def hostPort
+
+                    if (params.TARGET_BRANCH == 'main') {
+                        containerName = 'nodemain'
+                        hostPort = '3000'
+                    } else {
+                        containerName = 'nodedev'
+                        hostPort = '3001'
+                    }
+
+                    sh """
+                        CID=\$(docker ps -aq --filter "name=${containerName}")
+                        if [ ! -z "\$CID" ]; then
+                            docker rm -f \$CID || true
+                        fi
+                        docker run -d --name ${containerName} -p ${hostPort}:3000 ${env.IMAGE_FULL}
+                    """
+                }
+            }
+        }
+    }
+}
